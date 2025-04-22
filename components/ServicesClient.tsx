@@ -97,7 +97,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
 
     try {
       const sessionIdResponse = await fetch(
-        `http://localhost:5145/api/payment/get-session?token=${token}`
+        `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
       );
       if (!sessionIdResponse.ok) throw new Error("Не удалось получить sessionId");
       const { sessionId } = await sessionIdResponse.json();
@@ -117,7 +117,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       };
 
       const paymentResponse = await fetch(
-        "http://localhost:5145/api/payment/create-payment",
+        "https://widgetapipayment.hgg.kz/api/payment/create-payment",
         {
           method: "POST",
           headers: {
@@ -308,7 +308,7 @@ const ServicesClient = ({ services }: { services: Service[] }) => {
       }
   
       const response = await fetch(
-        `http://localhost:5240/Api/GetServiceById?serviceId=${serviceId}`,
+        `https://widgetapi.hgg.kz/Api/GetServiceById?serviceId=${serviceId}`,
         {
           headers: {
             "Content-Type": "application/json",

@@ -26,7 +26,7 @@ async function getServices(agentId: string): Promise<Service[]> {
   try {
     console.log(`Fetching services for agentId: ${agentId}`);
     const res = await fetch(
-      `http://82.115.60.5:5145/api/payment/get-agent-services?agentId=${agentId}`,
+      `https://widgetapipayment.hgg.kz/api/payment/get-agent-services?agentId=${agentId}`,
       {
         cache: 'no-store',
         headers: {
@@ -53,7 +53,7 @@ async function getServices(agentId: string): Promise<Service[]> {
 async function getCategories(): Promise<Category[]> {
   try {
     console.log('Fetching categories');
-    const res = await fetch('http://82.115.60.5:5240/Api/GetCategory', {
+    const res = await fetch('https://widgetapi.hgg.kz/Api/GetCategory', {
       cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',

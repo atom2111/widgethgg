@@ -24,7 +24,7 @@ interface Category {
 async function getCategories(): Promise<Category[]> {
   try {
     const res = await fetch(
-      "http://localhost:5240/Api/GetCategory",
+      "https://widgetapi.hgg.kz/Api/GetCategory",
       {
         cache: "no-store",
         headers: {
