@@ -33,7 +33,7 @@ interface CheckoutFormProps {
   service: Service | null;
 }
 
-// Generate a random 12-digit transaction ID
+// Генерация случайного 12-значного ID транзакции
 const generateTransactionId = (): string => {
   return Array.from({ length: 12 }, () =>
     Math.floor(Math.random() * 10).toString()
@@ -61,6 +61,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       setFormData(initialFormData);
       setIsSuccess(false);
       setCheckMessage('');
+      setErrors({});
     }
   }, [service]);
 
@@ -69,26 +70,32 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     setFormData({ ...formData, [name]: value });
     if (name === 'account') {
       setCheckMessage('');
+      setErrors((prev) => ({ ...prev, account: '' }));
     }
   };
 
   const handleAmountFocus = async () => {
     if (!formData.account?.trim()) {
-      setErrors({ account: "Account is required" });
+      setErrors({ account: "Поле аккаунта обязательно для заполнения" });
       return;
     }
 
     if (!token) {
-      setErrors({ submit: "Token is missing in URL" });
+      setErrors({ submit: "Токен отсутствует в URL" });
       return;
     }
 
     try {
       setIsLoading(true);
+      setCheckMessage('');
+      console.log('Отправка запроса AccountCheck:', { account: formData.account, serviceId: service?.id });
+
       const sessionIdResponse = await fetch(
         `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
       );
-      if (!sessionIdResponse.ok) throw new Error("Failed to get sessionId");
+      if (!sessionIdResponse.ok) {
+        throw new Error("Не удалось получить sessionId");
+      }
       const { sessionId } = await sessionIdResponse.json();
 
       const checkData = {
@@ -96,7 +103,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         sessionId: sessionId,
         transactionId: generateTransactionId(),
         service: String(service?.id || ""),
-        amount: "0", // Amount not required for check
+        amount: "0", // Сумма не требуется для проверки
         account: String(formData.account),
         additionalParams: Object.fromEntries(
           (service?.additionalParameters || []).map((param) => [
@@ -105,6 +112,8 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
           ])
         ),
       };
+
+      console.log('Данные для AccountCheck:', checkData);
 
       const checkResponse = await fetch(
         "https://widgetapipayment.hgg.kz/api/payment/account-check",
@@ -119,32 +128,40 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
 
       if (!checkResponse.ok) {
         const errorData = await checkResponse.json();
-        throw new Error(errorData.message || "Account check failed");
+        console.error('Ошибка AccountCheck:', errorData);
+        throw new Error(errorData.message || "Ошибка проверки аккаунта");
       }
 
       const checkResult = await checkResponse.json();
+      console.log('Ответ AccountCheck:', checkResult);
 
       if (service?.categoryId === 7) {
-        // For categoryId=7, set the OrderAmount
+        // Для categoryId=7 устанавливаем OrderAmount
         if (checkResult.TransactionContent?.Extras) {
           const orderAmount = checkResult.TransactionContent.Extras.find(
             (extra: any) => extra.fieldName === "OrderAmount"
           )?.fieldValue;
           if (orderAmount) {
-            setFormData(prev => ({ ...prev, amount: orderAmount }));
+            setFormData((prev) => ({ ...prev, amount: orderAmount }));
+            setCheckMessage('');
+          } else {
+            setCheckMessage('OrderAmount не найден в ответе');
           }
+        } else {
+          setCheckMessage('Extras отсутствуют в ответе');
         }
       } else {
-        // For other categories
+        // Для остальных категорий
         if (checkResult.ResponseStatus !== "10") {
-          setCheckMessage(checkResult.Message || "Account check failed");
+          setCheckMessage(checkResult.Message || "Ошибка проверки аккаунта");
         } else {
           setCheckMessage('');
         }
       }
     } catch (error) {
+      console.error('Ошибка в handleAmountFocus:', error);
       setCheckMessage(
-        error instanceof Error ? error.message : "Account check failed"
+        error instanceof Error ? error.message : "Ошибка проверки аккаунта"
       );
     } finally {
       setIsLoading(false);
@@ -155,15 +172,15 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     let tempErrors: FormErrors = {};
     const fields = [
       ...(service?.additionalParameters || []),
-      { name: "account", description: "Account", regex: ".*" },
-      { name: "amount", description: "Amount", regex: "^[0-9]+$" },
+      { name: "account", description: "Аккаунт", regex: ".*" },
+      { name: "amount", description: "Сумма", regex: "^[0-9]+$" },
     ];
 
     fields.forEach((param) => {
       if (!formData[param.name]?.trim()) {
-        tempErrors[param.name] = `${param.description} is required`;
+        tempErrors[param.name] = `${param.description} обязателен для заполнения`;
       } else if (!new RegExp(param.regex).test(formData[param.name])) {
-        tempErrors[param.name] = `Invalid ${param.description} format`;
+        tempErrors[param.name] = `Некорректный формат для ${param.description}`;
       }
     });
 
@@ -184,7 +201,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     }
 
     if (!token) {
-      setErrors({ submit: "Token is missing in URL" });
+      setErrors({ submit: "Токен отсутствует в URL" });
       return;
     }
 
@@ -195,7 +212,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       const sessionIdResponse = await fetch(
         `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
       );
-      if (!sessionIdResponse.ok) throw new Error("Failed to get sessionId");
+      if (!sessionIdResponse.ok) throw new Error("Не удалось получить sessionId");
       const { sessionId } = await sessionIdResponse.json();
 
       const paymentData = {
@@ -225,7 +242,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
 
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json();
-        throw new Error(errorData.message || "Payment creation failed");
+        throw new Error(errorData.message || "Ошибка создания платежа");
       }
 
       const paymentResult = await paymentResponse.json();
@@ -242,7 +259,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         submit:
           error instanceof Error
             ? error.message
-            : "Failed to create payment",
+            : "Ошибка создания платежа",
       });
     }
   };
@@ -288,13 +305,13 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         <div className="mb-4">
           <input
             name="account"
-            placeholder="Account"
+            placeholder="Аккаунт"
             className={`border ${
               errors.account ? "border-red-500" : "border-gray-300"
             } w-full pl-4 pr-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200`}
             value={formData.account || ""}
             onChange={handleChange}
-            aria-label="Account"
+            aria-label="Аккаунт"
             disabled={isLoading || isSuccess}
           />
           {errors.account && (
@@ -304,15 +321,15 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         <div className="mb-6">
           <input
             name="amount"
-            placeholder="Amount"
+            placeholder="Сумма"
             className={`border ${
               errors.amount ? "border-red-500" : "border-gray-300"
             } w-full pl-4 pr-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200`}
             value={formData.amount || ""}
             onChange={handleChange}
             onFocus={handleAmountFocus}
-            aria-label="Amount"
-            disabled={isLoading || isSuccess || service.categoryId === 7}
+            aria-label="Сумма"
+            disabled={isLoading || isSuccess}
           />
           {errors.amount && (
             <p className="text-red-500 text-xs mt-1">{errors.amount}</p>
@@ -337,7 +354,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
                   d="M5 13 l4 4L19 7"
                 />
               </svg>
-              <span>Payment created</span>
+              <span>Платеж создан</span>
             </div>
           ) : (
             <button
@@ -366,7 +383,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
                   />
                 </svg>
               ) : null}
-              {isLoading ? "Processing..." : "Pay"}
+              {isLoading ? "Обработка..." : "Оплатить"}
             </button>
           )}
         </div>
@@ -376,13 +393,13 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         {!isSuccess && (
           <>
             <div className="mt-4 text-center text-gray-500 text-xs">
-              <p>Payment recommendation</p>
+              <p>Рекомендации по оплате</p>
             </div>
             <div className="mt-4 text-left text-gray-500 text-xs">
               <ul className="list-disc list-inside">
-                <li>Verify entered data</li>
+                <li>Проверьте правильность введенных данных</li>
                 <br />
-                <li>Click "Pay" button</li>
+                <li>Нажмите кнопку "Оплатить"</li>
                 <br />
               </ul>
             </div>
