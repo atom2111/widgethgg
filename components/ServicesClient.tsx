@@ -63,7 +63,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       setIsSuccess(false);
       setCheckMessage('');
       setErrors({});
-      setIsAmountEditable(service.categoryId !== 7);
+      setIsAmountEditable(false); // Изначально поле суммы заблокировано
     }
   }, [service]);
 
@@ -73,7 +73,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     if (name === 'account') {
       setCheckMessage('');
       setErrors((prev) => ({ ...prev, account: '' }));
-      setIsAmountEditable(service?.categoryId !== 7);
+      setIsAmountEditable(false); // Сбрасываем, чтобы требовать повторную проверку
     }
   };
 
@@ -101,7 +101,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
       );
       if (!sessionIdResponse.ok) {
-        throw new Error("Не удалось получить sessionId");
+        throw new Error(`Не удалось получить sessionId: ${sessionIdResponse.statusText}`);
       }
       const { sessionId } = await sessionIdResponse.json();
 
@@ -225,7 +225,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       const sessionIdResponse = await fetch(
         `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
       );
-      if (!sessionIdResponse.ok) throw new Error("Не удалось получить sessionId");
+      if (!sessionIdResponse.ok) throw new Error(`Не удалось получить sessionId: ${sessionIdResponse.statusText}`);
       const { sessionId } = await sessionIdResponse.json();
 
       const paymentData = {
@@ -373,7 +373,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
             <button
               type="submit"
               className="w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200 disabled:bg-blue-400 flex items-center justify-center"
-              disabled={isLoading || !!checkMessage}
+              disabled={isLoading || !!checkMessage || !formData.amount}
             >
               {isLoading ? (
                 <svg
