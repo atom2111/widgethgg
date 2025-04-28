@@ -33,11 +33,19 @@ interface CheckoutFormProps {
   service: Service | null;
 }
 
+// Generate a random 12-digit transaction ID
+const generateTransactionId = (): string => {
+  return Array.from({ length: 12 }, () =>
+    Math.floor(Math.random() * 10).toString()
+  ).join('');
+};
+
 const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
   const [formData, setFormData] = useState<FormData>({});
   const [errors, setErrors] = useState<FormErrors>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [checkMessage, setCheckMessage] = useState<string>('');
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
@@ -52,27 +60,110 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       initialFormData.amount = "";
       setFormData(initialFormData);
       setIsSuccess(false);
+      setCheckMessage('');
     }
   }, [service]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData({ ...formData, [name]: value });
+    if (name === 'account') {
+      setCheckMessage('');
+    }
+  };
+
+  const handleAmountFocus = async () => {
+    if (!formData.account?.trim()) {
+      setErrors({ account: "Account is required" });
+      return;
+    }
+
+    if (!token) {
+      setErrors({ submit: "Token is missing in URL" });
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const sessionIdResponse = await fetch(
+        `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
+      );
+      if (!sessionIdResponse.ok) throw new Error("Failed to get sessionId");
+      const { sessionId } = await sessionIdResponse.json();
+
+      const checkData = {
+        token: token,
+        sessionId: sessionId,
+        transactionId: generateTransactionId(),
+        service: String(service?.id || ""),
+        amount: "0", // Amount not required for check
+        account: String(formData.account),
+        additionalParams: Object.fromEntries(
+          (service?.additionalParameters || []).map((param) => [
+            param.name,
+            String(formData[param.name] || ""),
+          ])
+        ),
+      };
+
+      const checkResponse = await fetch(
+        "https://widgetapipayment.hgg.kz/api/payment/account-check",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(checkData),
+        }
+      );
+
+      if (!checkResponse.ok) {
+        const errorData = await checkResponse.json();
+        throw new Error(errorData.message || "Account check failed");
+      }
+
+      const checkResult = await checkResponse.json();
+
+      if (service?.categoryId === 7) {
+        // For categoryId=7, set the OrderAmount
+        if (checkResult.TransactionContent?.Extras) {
+          const orderAmount = checkResult.TransactionContent.Extras.find(
+            (extra: any) => extra.fieldName === "OrderAmount"
+          )?.fieldValue;
+          if (orderAmount) {
+            setFormData(prev => ({ ...prev, amount: orderAmount }));
+          }
+        }
+      } else {
+        // For other categories
+        if (checkResult.ResponseStatus !== "10") {
+          setCheckMessage(checkResult.Message || "Account check failed");
+        } else {
+          setCheckMessage('');
+        }
+      }
+    } catch (error) {
+      setCheckMessage(
+        error instanceof Error ? error.message : "Account check failed"
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const validate = () => {
     let tempErrors: FormErrors = {};
     const fields = [
       ...(service?.additionalParameters || []),
-      { name: "account", description: "Аккаунт", regex: ".*" },
-      { name: "amount", description: "Сумма", regex: "^[0-9]+$" },
+      { name: "account", description: "Account", regex: ".*" },
+      { name: "amount", description: "Amount", regex: "^[0-9]+$" },
     ];
 
     fields.forEach((param) => {
       if (!formData[param.name]?.trim()) {
-        tempErrors[param.name] = `${param.description} обязательно для заполнения`;
+        tempErrors[param.name] = `${param.description} is required`;
       } else if (!new RegExp(param.regex).test(formData[param.name])) {
-        tempErrors[param.name] = `Некорректное значение для ${param.description}`;
+        tempErrors[param.name] = `Invalid ${param.description} format`;
       }
     });
 
@@ -81,6 +172,11 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (checkMessage) {
+      setErrors({ submit: checkMessage });
+      return;
+    }
+
     const validationErrors = validate();
     if (Object.keys(validationErrors).length !== 0) {
       setErrors(validationErrors);
@@ -88,7 +184,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     }
 
     if (!token) {
-      setErrors({ submit: "Токен отсутствует в URL" });
+      setErrors({ submit: "Token is missing in URL" });
       return;
     }
 
@@ -99,7 +195,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       const sessionIdResponse = await fetch(
         `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
       );
-      if (!sessionIdResponse.ok) throw new Error("Не удалось получить sessionId");
+      if (!sessionIdResponse.ok) throw new Error("Failed to get sessionId");
       const { sessionId } = await sessionIdResponse.json();
 
       const paymentData = {
@@ -129,7 +225,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
 
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json();
-        throw new Error(errorData.message || "Ошибка при создании платежа");
+        throw new Error(errorData.message || "Payment creation failed");
       }
 
       const paymentResult = await paymentResponse.json();
@@ -146,7 +242,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         submit:
           error instanceof Error
             ? error.message
-            : "Произошла ошибка при создании платежа",
+            : "Failed to create payment",
       });
     }
   };
@@ -192,7 +288,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         <div className="mb-4">
           <input
             name="account"
-            placeholder="Аккаунт"
+            placeholder="Account"
             className={`border ${
               errors.account ? "border-red-500" : "border-gray-300"
             } w-full pl-4 pr-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200`}
@@ -208,17 +304,21 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         <div className="mb-6">
           <input
             name="amount"
-            placeholder="Сумма"
+            placeholder="Amount"
             className={`border ${
               errors.amount ? "border-red-500" : "border-gray-300"
             } w-full pl-4 pr-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200`}
             value={formData.amount || ""}
             onChange={handleChange}
+            onFocus={handleAmountFocus}
             aria-label="Amount"
-            disabled={isLoading || isSuccess}
+            disabled={isLoading || isSuccess || service.categoryId === 7}
           />
           {errors.amount && (
             <p className="text-red-500 text-xs mt-1">{errors.amount}</p>
+          )}
+          {checkMessage && (
+            <p className="text-red-500 text-xs mt-1">{checkMessage}</p>
           )}
         </div>
         <div className="relative">
@@ -237,13 +337,13 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
                   d="M5 13 l4 4L19 7"
                 />
               </svg>
-              <span>Оплата создана</span>
+              <span>Payment created</span>
             </div>
           ) : (
             <button
               type="submit"
               className="w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200 disabled:bg-blue-400 flex items-center justify-center"
-              disabled={isLoading}
+              disabled={isLoading || !!checkMessage}
             >
               {isLoading ? (
                 <svg
@@ -266,7 +366,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
                   />
                 </svg>
               ) : null}
-              {isLoading ? "Обработка..." : "Оплатить"}
+              {isLoading ? "Processing..." : "Pay"}
             </button>
           )}
         </div>
@@ -276,13 +376,13 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         {!isSuccess && (
           <>
             <div className="mt-4 text-center text-gray-500 text-xs">
-              <p>Рекомендация по оплате</p>
+              <p>Payment recommendation</p>
             </div>
             <div className="mt-4 text-left text-gray-500 text-xs">
               <ul className="list-disc list-inside">
-                <li>Проверьте правильность введенных данных</li>
+                <li>Verify entered data</li>
                 <br />
-                <li>Нажмите кнопку "Оплатить"</li>
+                <li>Click "Pay" button</li>
                 <br />
               </ul>
             </div>
