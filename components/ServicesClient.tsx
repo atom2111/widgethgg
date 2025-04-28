@@ -46,7 +46,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [checkMessage, setCheckMessage] = useState<string>('');
-  const [isAmountEditable, setIsAmountEditable] = useState<boolean>(false);
+  const [isAmountEditable, setIsAmountEditable] = useState<boolean>(true); // Поле суммы изначально кликабельно
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
@@ -63,7 +63,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       setIsSuccess(false);
       setCheckMessage('');
       setErrors({});
-      setIsAmountEditable(false); // Изначально поле суммы заблокировано
+      setIsAmountEditable(true); // Сбрасываем до кликабельного состояния
     }
   }, [service]);
 
@@ -73,7 +73,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     if (name === 'account') {
       setCheckMessage('');
       setErrors((prev) => ({ ...prev, account: '' }));
-      setIsAmountEditable(false); // Сбрасываем, чтобы требовать повторную проверку
+      setIsAmountEditable(true); // Разрешаем клик на поле суммы после ввода аккаунта
     }
   };
 
@@ -151,7 +151,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
           if (orderAmount) {
             setFormData((prev) => ({ ...prev, amount: orderAmount }));
             setCheckMessage('');
-            setIsAmountEditable(false);
+            setIsAmountEditable(false); // Блокируем поле суммы
           } else {
             setCheckMessage('OrderAmount не найден в ответе');
             setIsAmountEditable(false);
@@ -164,10 +164,10 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         // Для остальных категорий
         if (checkResult.ResponseStatus === "10") {
           setCheckMessage('');
-          setIsAmountEditable(true);
+          setIsAmountEditable(true); // Разрешаем ввод суммы
         } else {
           setCheckMessage(checkResult.Message || "Ошибка проверки аккаунта");
-          setIsAmountEditable(false);
+          setIsAmountEditable(false); // Блокируем поле суммы
         }
       }
     } catch (error) {
