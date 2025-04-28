@@ -46,6 +46,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [checkMessage, setCheckMessage] = useState<string>('');
+  const [isAmountEditable, setIsAmountEditable] = useState<boolean>(false);
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
@@ -62,6 +63,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       setIsSuccess(false);
       setCheckMessage('');
       setErrors({});
+      setIsAmountEditable(service.categoryId !== 7);
     }
   }, [service]);
 
@@ -71,17 +73,22 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     if (name === 'account') {
       setCheckMessage('');
       setErrors((prev) => ({ ...prev, account: '' }));
+      setIsAmountEditable(service?.categoryId !== 7);
     }
   };
 
   const handleAmountFocus = async () => {
     if (!formData.account?.trim()) {
       setErrors({ account: "Поле аккаунта обязательно для заполнения" });
+      setCheckMessage('');
+      setIsAmountEditable(false);
       return;
     }
 
     if (!token) {
       setErrors({ submit: "Токен отсутствует в URL" });
+      setCheckMessage('');
+      setIsAmountEditable(false);
       return;
     }
 
@@ -103,7 +110,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         sessionId: sessionId,
         transactionId: generateTransactionId(),
         service: String(service?.id || ""),
-        amount: "0", // Сумма не требуется для проверки
+        amount: "0",
         account: String(formData.account),
         additionalParams: Object.fromEntries(
           (service?.additionalParameters || []).map((param) => [
@@ -144,18 +151,23 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
           if (orderAmount) {
             setFormData((prev) => ({ ...prev, amount: orderAmount }));
             setCheckMessage('');
+            setIsAmountEditable(false);
           } else {
             setCheckMessage('OrderAmount не найден в ответе');
+            setIsAmountEditable(false);
           }
         } else {
           setCheckMessage('Extras отсутствуют в ответе');
+          setIsAmountEditable(false);
         }
       } else {
         // Для остальных категорий
-        if (checkResult.ResponseStatus !== "10") {
-          setCheckMessage(checkResult.Message || "Ошибка проверки аккаунта");
-        } else {
+        if (checkResult.ResponseStatus === "10") {
           setCheckMessage('');
+          setIsAmountEditable(true);
+        } else {
+          setCheckMessage(checkResult.Message || "Ошибка проверки аккаунта");
+          setIsAmountEditable(false);
         }
       }
     } catch (error) {
@@ -163,6 +175,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       setCheckMessage(
         error instanceof Error ? error.message : "Ошибка проверки аккаунта"
       );
+      setIsAmountEditable(false);
     } finally {
       setIsLoading(false);
     }
@@ -329,7 +342,7 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
             onChange={handleChange}
             onFocus={handleAmountFocus}
             aria-label="Сумма"
-            disabled={isLoading || isSuccess}
+            disabled={isLoading || isSuccess || !isAmountEditable}
           />
           {errors.amount && (
             <p className="text-red-500 text-xs mt-1">{errors.amount}</p>
