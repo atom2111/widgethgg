@@ -41,7 +41,7 @@ async function getServices(agentId: string): Promise<Service[]> {
     }
 
     const text = await res.text();
-    console.log(`Services response: ${text}`);
+    
     const data = JSON.parse(text);
     return data;
   } catch (error) {
@@ -52,7 +52,7 @@ async function getServices(agentId: string): Promise<Service[]> {
 
 async function getCategories(): Promise<Category[]> {
   try {
-    console.log('Fetching categories');
+    
     const res = await fetch('https://widgetapi.hgg.kz/Api/GetCategory', {
       cache: 'no-store',
       headers: {
@@ -66,7 +66,6 @@ async function getCategories(): Promise<Category[]> {
     }
 
     const text = await res.text();
-    console.log(`Categories response: ${text}`);
     const data = JSON.parse(text);
     return data;
   } catch (error) {

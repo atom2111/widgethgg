@@ -41,7 +41,7 @@ async function getCategories(): Promise<Category[]> {
     const text = await res.text(); // Получаем тело ответа как текст
     try {
       const data = JSON.parse(text); // Пробуем парсить как JSON
-      console.log("Данные категорий:", data); // Логируем данные
+      
       return data;
     } catch (parseError) {
       console.error("Ответ не является валидным JSON:", text);

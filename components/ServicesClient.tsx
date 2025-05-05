@@ -1,9 +1,10 @@
 ﻿"use client";
 
-import React, { useState, useEffect } from 'react';
-import { Search } from 'lucide-react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import React, { useState, useEffect } from "react";
+import { Search } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
 
+// Интерфейсы
 interface AdditionalParameter {
   name: string;
   description: string;
@@ -17,6 +18,7 @@ interface Service {
   categoryId: number;
   description: string;
   additionalParameters?: AdditionalParameter[];
+  currencyISO?: string;
 }
 
 interface FormData {
@@ -33,24 +35,116 @@ interface CheckoutFormProps {
   service: Service | null;
 }
 
-// Генерация случайного 12-значного ID транзакции
+interface TransactionContent {
+  Service?: string;
+  Account?: string;
+  Amount?: number;
+  Currency?: string | null;
+  ExchangeRate?: number;
+  ServiceCurrency?: string | null;
+  Extras?: { FieldName: string; FieldValue: string }[];
+}
+
+interface ResponseModel {
+  ResponseStatus?: string | number;
+  Error?: string;
+  TransactionContent?: {
+    Extras?: { FieldName: string; FieldValue: string }[];
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
+interface ApiResponse {
+  ResponseLog?: ResponseModel | string;
+  message?: string;
+  details?: string;
+}
+
 const generateTransactionId = (): string => {
-  return Array.from({ length: 12 }, () =>
-    Math.floor(Math.random() * 10).toString()
-  ).join('');
+  return Array.from({ length: 12 }, () => Math.floor(Math.random() * 10).toString()).join("");
 };
 
 const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
   const [formData, setFormData] = useState<FormData>({});
   const [errors, setErrors] = useState<FormErrors>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [checkMessage, setCheckMessage] = useState<string>('');
-  const [isAmountEditable, setIsAmountEditable] = useState<boolean>(true); // Поле суммы изначально кликабельно
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [checkMessage, setCheckMessage] = useState<string>("");
+  const [accountCheckStatus, setAccountCheckStatus] = useState<"success" | "error" | null>(null);
+  const [isAmountAutoFilled, setIsAmountAutoFilled] = useState<boolean>(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [currencyISO, setCurrencyISO] = useState<string | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState<boolean>(false);
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
 
+  // Загрузка sessionId при открытии формы
+  useEffect(() => {
+    if (isOpen && token) {
+      const fetchSession = async () => {
+        setIsSessionLoading(true);
+        try {
+          const sessionRes = await fetch(`https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`);
+          if (!sessionRes.ok) {
+            const err = await sessionRes.json();
+            throw new Error(`Не удалось получить sessionId: ${err.message || sessionRes.statusText}`);
+          }
+          const data = await sessionRes.json();
+          console.log("Ответ от get-session:", data);
+          if (!data.sessionId) {
+            throw new Error("Некорректный ответ API: отсутствует sessionId");
+          }
+          setSessionId(data.sessionId);
+        } catch (err) {
+          console.error("Ошибка получения сессии:", err);
+          setErrors({ submit: "Ошибка инициализации формы: не удалось получить сессию. Обратитесь в поддержку." });
+        } finally {
+          setIsSessionLoading(false);
+        }
+      };
+      fetchSession();
+    }
+  }, [isOpen, token]);
+
+  // Загрузка валюты сервиса
+  useEffect(() => {
+    if (isOpen && service?.id && token) {
+      const fetchCurrency = async () => {
+        try {
+          const serviceRes = await fetch(`https://widgetapipayment.hgg.kz/api/payment/GetServiceById?serviceId=${service.id}`, {
+            headers: {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (!serviceRes.ok) {
+            const err = await serviceRes.json();
+            console.error("Ошибка ответа API GetServiceById:", err);
+            throw new Error(err.message || `Ошибка HTTP: ${serviceRes.statusText}`);
+          }
+          const serviceData = await serviceRes.json();
+          console.log("Данные сервиса от GetServiceById:", serviceData);
+          if (!serviceData.currencyISO) {
+            throw new Error("Валюта не указана для сервиса");
+          }
+          setCurrencyISO(serviceData.currencyISO);
+        } catch (err) {
+          console.error("Ошибка получения валюты сервиса:", err);
+          const errorMessage = err instanceof Error 
+            ? `Ошибка загрузки валюты: ${err.message}. Проверьте настройки сервиса или обратитесь в поддержку.` 
+            : "Ошибка загрузки валюты. Проверьте настройки сервиса или обратитесь в поддержку.";
+          setErrors({ submit: errorMessage });
+          setCurrencyISO(null);
+        }
+      };
+      fetchCurrency();
+    }
+  }, [isOpen, service, token]);
+
+  // Инициализация formData при изменении сервиса
   useEffect(() => {
     if (service) {
       const initialFormData: FormData = {};
@@ -61,132 +155,133 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
       initialFormData.amount = "";
       setFormData(initialFormData);
       setIsSuccess(false);
-      setCheckMessage('');
+      setCheckMessage("");
       setErrors({});
-      setIsAmountEditable(true); // Сбрасываем до кликабельного состояния
+      setAccountCheckStatus(null);
+      setIsAmountAutoFilled(false);
     }
   }, [service]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-    if (name === 'account') {
-      setCheckMessage('');
-      setErrors((prev) => ({ ...prev, account: '' }));
-      setIsAmountEditable(true); // Разрешаем клик на поле суммы после ввода аккаунта
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    if (name === "account") {
+      setCheckMessage("");
+      setAccountCheckStatus(null);
+      setErrors((prev) => ({ ...prev, account: "" }));
     }
   };
 
-  const handleAmountFocus = async () => {
+  const handleAccountBlur = async () => {
     if (!formData.account?.trim()) {
       setErrors({ account: "Поле аккаунта обязательно для заполнения" });
-      setCheckMessage('');
-      setIsAmountEditable(false);
+      setAccountCheckStatus(null);
       return;
     }
 
-    if (!token) {
-      setErrors({ submit: "Токен отсутствует в URL" });
-      setCheckMessage('');
-      setIsAmountEditable(false);
+    if (!token || !sessionId || !currencyISO) {
+      setErrors({ submit: "Токен, sessionId или валюта отсутствует" });
+      setAccountCheckStatus(null);
       return;
     }
+
+    setIsLoading(true);
+    setCheckMessage("");
+    setAccountCheckStatus(null);
 
     try {
-      setIsLoading(true);
-      setCheckMessage('');
-      console.log('Отправка запроса AccountCheck:', { account: formData.account, serviceId: service?.id });
-
-      const sessionIdResponse = await fetch(
-        `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
-      );
-      if (!sessionIdResponse.ok) {
-        throw new Error(`Не удалось получить sessionId: ${sessionIdResponse.statusText}`);
-      }
-      const { sessionId } = await sessionIdResponse.json();
-
       const checkData = {
-        token: token,
-        sessionId: sessionId,
+        token,
+        sessionId,
         transactionId: generateTransactionId(),
         service: String(service?.id || ""),
         amount: "0",
+        currency: currencyISO,
         account: String(formData.account),
         additionalParams: Object.fromEntries(
-          (service?.additionalParameters || []).map((param) => [
-            param.name,
-            String(formData[param.name] || ""),
-          ])
+          (service?.additionalParameters || []).map((param) => [param.name, formData[param.name] || ""])
         ),
       };
 
-      console.log('Данные для AccountCheck:', checkData);
+      console.log("Отправка checkData на account-check:", checkData);
 
-      const checkResponse = await fetch(
-        "https://widgetapipayment.hgg.kz/api/payment/account-check",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(checkData),
-        }
-      );
+      const checkRes = await fetch("https://widgetapipayment.hgg.kz/api/payment/account-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(checkData),
+      });
 
-      if (!checkResponse.ok) {
-        const errorData = await checkResponse.json();
-        console.error('Ошибка AccountCheck:', errorData);
-        throw new Error(errorData.message || "Ошибка проверки аккаунта");
+      const responseData: ApiResponse = await checkRes.json();
+      console.log("Ответ AccountCheck:", responseData);
+
+      if (!checkRes.ok) {
+        const errorMessage = responseData.message || `Ошибка AccountCheck: ${checkRes.status}`;
+        setAccountCheckStatus("error");
+        setCheckMessage(errorMessage);
+        throw new Error(errorMessage);
       }
 
-      const checkResult = await checkResponse.json();
-      console.log('Ответ AccountCheck:', checkResult);
+      const responseLog = typeof responseData.ResponseLog === "string" 
+        ? JSON.parse(responseData.ResponseLog) 
+        : responseData.ResponseLog || responseData;
 
-      if (service?.categoryId === 7) {
-        // Для categoryId=7 устанавливаем OrderAmount
-        if (checkResult.TransactionContent?.Extras) {
-          const orderAmount = checkResult.TransactionContent.Extras.find(
-            (extra: any) => extra.fieldName === "OrderAmount"
-          )?.fieldValue;
-          if (orderAmount) {
-            setFormData((prev) => ({ ...prev, amount: orderAmount }));
-            setCheckMessage('');
-            setIsAmountEditable(false); // Блокируем поле суммы
+      if (!responseLog || !responseLog.ResponseStatus) {
+        console.error("Недостаточно данных в ответе API:", responseData);
+        setAccountCheckStatus("error");
+        setCheckMessage("Некорректный формат ответа сервера");
+        throw new Error("Некорректный формат ответа сервера");
+      }
+
+      const responseStatus = responseLog.ResponseStatus;
+      const isSuccess = responseStatus === 10 || responseStatus === "10";
+
+      if (isSuccess) {
+        setAccountCheckStatus("success");
+        if (service?.categoryId === 7) {
+          const extras = responseLog.TransactionContent?.Extras || [];
+          const orderAmount = extras.find(
+            (extra: { FieldName: string; FieldValue: string }) => extra.FieldName === "OrderAmount"
+          )?.FieldValue;
+
+          if (orderAmount && !isNaN(parseFloat(orderAmount))) {
+            const formattedAmount = parseFloat(orderAmount).toFixed(2);
+            setFormData((prev) => ({ ...prev, amount: formattedAmount }));
+            setCheckMessage(`Цена ваучера: ${formattedAmount} ${currencyISO}`);
+            setIsAmountAutoFilled(true);
           } else {
-            setCheckMessage('OrderAmount не найден в ответе');
-            setIsAmountEditable(false);
+            setCheckMessage("Сумма не получена от сервиса");
+            setAccountCheckStatus("error");
           }
         } else {
-          setCheckMessage('Extras отсутствуют в ответе');
-          setIsAmountEditable(false);
+          setFormData((prev) => ({ ...prev, amount: "" }));
+          setIsAmountAutoFilled(false);
         }
       } else {
-        // Для остальных категорий
-        if (checkResult.ResponseStatus === "10") {
-          setCheckMessage('');
-          setIsAmountEditable(true); // Разрешаем ввод суммы
-        } else {
-          setCheckMessage(checkResult.Message || "Ошибка проверки аккаунта");
-          setIsAmountEditable(false); // Блокируем поле суммы
-        }
+        setAccountCheckStatus("error");
+        setCheckMessage(
+          responseLog.Error ||
+            `Сервис недоступен или аккаунт некорректен (ResponseStatus: ${responseStatus})`
+        );
       }
-    } catch (error) {
-      console.error('Ошибка в handleAmountFocus:', error);
+    } catch (err) {
+      console.error("Ошибка проверки аккаунта:", err);
+      setAccountCheckStatus("error");
       setCheckMessage(
-        error instanceof Error ? error.message : "Ошибка проверки аккаунта"
+        err instanceof Error
+          ? err.message
+          : "Ошибка при проверки аккаунта. Попробуйте позже или обратитесь в поддержку."
       );
-      setIsAmountEditable(false);
     } finally {
       setIsLoading(false);
     }
   };
 
   const validate = () => {
-    let tempErrors: FormErrors = {};
+    const tempErrors: FormErrors = {};
     const fields = [
       ...(service?.additionalParameters || []),
       { name: "account", description: "Аккаунт", regex: ".*" },
-      { name: "amount", description: "Сумма", regex: "^[0-9]+$" },
+      { name: "amount", description: "Сумма", regex: "^[0-9]+(\\.[0-9]{1,2})?$" },
     ];
 
     fields.forEach((param) => {
@@ -200,21 +295,22 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     return tempErrors;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (checkMessage) {
-      setErrors({ submit: checkMessage });
+
+    if (accountCheckStatus !== "success") {
+      setErrors({ submit: checkMessage || "Проверка аккаунта не пройдена" });
       return;
     }
 
     const validationErrors = validate();
-    if (Object.keys(validationErrors).length !== 0) {
+    if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
       return;
     }
 
-    if (!token) {
-      setErrors({ submit: "Токен отсутствует в URL" });
+    if (!token || !sessionId || !currencyISO) {
+      setErrors({ submit: "Токен, sessionId или валюта отсутствует" });
       return;
     }
 
@@ -222,17 +318,12 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     setIsLoading(true);
 
     try {
-      const sessionIdResponse = await fetch(
-        `https://widgetapipayment.hgg.kz/api/payment/get-session?token=${token}`
-      );
-      if (!sessionIdResponse.ok) throw new Error(`Не удалось получить sessionId: ${sessionIdResponse.statusText}`);
-      const { sessionId } = await sessionIdResponse.json();
-
       const paymentData = {
-        token: token,
-        sessionId: sessionId,
+        token,
+        sessionId,
         service: String(service?.id || ""),
         amount: String(formData.amount),
+        currency: currencyISO,
         account: String(formData.account),
         additionalParams: Object.fromEntries(
           (service?.additionalParameters || []).map((param) => [
@@ -242,16 +333,18 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
         ),
       };
 
-      const paymentResponse = await fetch(
-        "https://widgetapipayment.hgg.kz/api/payment/create-payment",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(paymentData),
-        }
-      );
+      console.log("Отправка paymentData на payment endpoint:", paymentData);
+
+      const paymentEndpoint =
+        service?.categoryId === 7
+          ? "https://widgetapipayment.hgg.kz/api/payment/process-payment"
+          : "https://widgetapipayment.hgg.kz/api/payment/create-payment";
+
+      const paymentResponse = await fetch(paymentEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(paymentData),
+      });
 
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json();
@@ -269,22 +362,43 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
     } catch (error) {
       setIsLoading(false);
       setErrors({
-        submit:
-          error instanceof Error
-            ? error.message
-            : "Ошибка создания платежа",
+        submit: error instanceof Error ? error.message : "Ошибка создания платежа",
       });
     }
   };
 
   if (!service) return null;
 
+  if (isSessionLoading) {
+    return (
+      <div className="fixed z-50 w-full md:w-96 bg-white shadow-lg p-6 flex items-center justify-center h-[600px] md:h-full top-0 right-0">
+        <div className="spinner w-8 h-8 border-4 border-t-transparent border-gray-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!currencyISO) {
+    return (
+      <div className="fixed z-50 w-full md:w-96 bg-white shadow-lg p-6 h-[600px] md:h-full top-0 right-0">
+        <button
+          onClick={onClose}
+          className="absolute top-2 right-2 text-gray-600 hover:text-gray-800 text-xl"
+        >
+          ✕
+        </button>
+        <p className="text-red-500 text-center mt-10">
+          {errors.submit || "Ошибка загрузки валюты. Проверьте настройки сервиса или обратитесь в поддержку."}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`fixed z-50 w-full md:w-96 bg-white shadow-lg p-0 md:p-6 transition-all duration-700 ease-in-out overflow-y-auto left-0 right-0 md:left-auto md:right-0 ${
+      className={`fixed z-50 w-full md:w-96 bg-white shadow-lg p-0 md:p-6 transition-all duration-700 ease-in-out overflow-y-auto top-0 ${
         isOpen
-          ? "bottom-0 h-[600px] opacity-100 md:top-0 md:h-full md:bottom-auto"
-          : "bottom-[-600px] h-0 opacity-0 md:top-0 md:right-[-384px] md:h-full md:bottom-auto"
+          ? "right-0 h-[600px] opacity-100 md:h-full"
+          : "right-[-100%] h-0 opacity-0 md:h-full"
       }`}
     >
       <button
@@ -315,20 +429,35 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
             )}
           </div>
         ))}
-        <div className="mb-4">
+        <div className="mb-4 relative">
           <input
             name="account"
             placeholder="Аккаунт"
             className={`border ${
-              errors.account ? "border-red-500" : "border-gray-300"
+              errors.account
+                ? "border-red-500"
+                : accountCheckStatus === "success"
+                ? "border-green-500"
+                : accountCheckStatus === "error"
+                ? "border-red-500"
+                : "border-gray-300"
             } w-full pl-4 pr-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200`}
             value={formData.account || ""}
             onChange={handleChange}
+            onBlur={handleAccountBlur}
             aria-label="Аккаунт"
             disabled={isLoading || isSuccess}
           />
+          {isLoading && (
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+              <div className="spinner w-4 h-4 border-2 border-t-transparent border-gray-600 rounded-full animate-spin"></div>
+            </div>
+          )}
           {errors.account && (
             <p className="text-red-500 text-xs mt-1">{errors.account}</p>
+          )}
+          {checkMessage && accountCheckStatus === "error" && (
+            <p className="text-red-500 text-xs mt-1">{checkMessage}</p>
           )}
         </div>
         <div className="mb-6">
@@ -340,91 +469,49 @@ const CheckoutForm = ({ isOpen, onClose, service }: CheckoutFormProps) => {
             } w-full pl-4 pr-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200`}
             value={formData.amount || ""}
             onChange={handleChange}
-            onFocus={handleAmountFocus}
             aria-label="Сумма"
-            disabled={isLoading || isSuccess || !isAmountEditable}
+            disabled={isLoading || isSuccess || (service?.categoryId === 7 && isAmountAutoFilled)}
+            required
           />
           {errors.amount && (
             <p className="text-red-500 text-xs mt-1">{errors.amount}</p>
           )}
-          {checkMessage && (
-            <p className="text-red-500 text-xs mt-1">{checkMessage}</p>
+          {checkMessage && accountCheckStatus === "success" && (
+            <p className={`text-${service?.categoryId === 7 ? "green" : "gray"}-500 text-xs mt-1`}>
+              {checkMessage}
+            </p>
           )}
         </div>
-        <div className="relative">
-          {isSuccess ? (
-            <div className="w-full py-2 px-4 bg-green-600 text-white font-semibold rounded-lg shadow-md flex items-center justify-center gap-2">
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13 l4 4L19 7"
-                />
-              </svg>
-              <span>Платеж создан</span>
-            </div>
-          ) : (
-            <button
-              type="submit"
-              className="w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200 disabled:bg-blue-400 flex items-center justify-center"
-              disabled={isLoading || !!checkMessage || !formData.amount}
-            >
-              {isLoading ? (
-                <svg
-                  className="animate-spin h-5 w-5 mr-2"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                    fill="none"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-              ) : null}
-              {isLoading ? "Обработка..." : "Оплатить"}
-            </button>
-          )}
-        </div>
+        {isSuccess && (
+          <div className="text-center mb-4 text-green-500">Платеж успешно создан!</div>
+        )}
         {errors.submit && (
-          <p className="text-red-500 text-xs mt-2 text-center">{errors.submit}</p>
+          <div className="text-center mb-4 text-red-500">{errors.submit}</div>
         )}
-        {!isSuccess && (
-          <>
-            <div className="mt-4 text-center text-gray-500 text-xs">
-              <p>Рекомендации по оплате</p>
-            </div>
-            <div className="mt-4 text-left text-gray-500 text-xs">
-              <ul className="list-disc list-inside">
-                <li>Проверьте правильность введенных данных</li>
-                <br />
-                <li>Нажмите кнопку "Оплатить"</li>
-                <br />
-              </ul>
-            </div>
-          </>
-        )}
+        <div className="text-center">
+          <button
+            type="submit"
+            className={`bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition duration-200 flex items-center justify-center w-full ${
+              isLoading || isSuccess || accountCheckStatus !== "success"
+                ? "opacity-50 cursor-not-allowed"
+                : ""
+            }`}
+            disabled={isLoading || isSuccess || accountCheckStatus !== "success"}
+          >
+            {isLoading ? (
+              <div className="spinner w-4 h-4 border-4 border-t-transparent border-blue-600 rounded-full animate-spin"></div>
+            ) : (
+              "Оплатить"
+            )}
+          </button>
+        </div>
       </form>
     </div>
   );
 };
 
 const ServicesClient = ({ services }: { services: Service[] }) => {
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const searchParams = useSearchParams();
@@ -434,9 +521,10 @@ const ServicesClient = ({ services }: { services: Service[] }) => {
     try {
       const token = searchParams.get("token");
       if (!token) {
+        console.error("Токен отсутствует в URL");
         throw new Error("Токен отсутствует в URL");
       }
-  
+
       const response = await fetch(
         `https://widgetapi.hgg.kz/Api/GetServiceById?serviceId=${serviceId}`,
         {
@@ -447,29 +535,24 @@ const ServicesClient = ({ services }: { services: Service[] }) => {
           },
         }
       );
-  
+
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Ошибка HTTP: ${response.status} ${response.statusText}`, errorText);
         throw new Error(`Ошибка HTTP: ${response.status} ${response.statusText}`);
       }
-  
-      const text = await response.text();
-      try {
-        const data: Service = JSON.parse(text);
-        setSelectedService(data);
-        setIsFormOpen(true);
-      } catch (parseError) {
-        console.error("Ответ не является валидным JSON:", text);
-        throw new Error("Сервер вернул не JSON-ответ");
-      }
+
+      const data: Service = await response.json();
+      console.log("Загружен сервис:", data);
+      setSelectedService(data);
+      setIsFormOpen(true);
     } catch (error) {
       console.error("Ошибка при загрузке данных сервиса:", error);
     }
   };
 
   const filteredServices = services.filter((service) => {
-    const matchesSearch = service.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
+    const matchesSearch = service.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = service.categoryId === parseInt(categoryId);
     return matchesSearch && matchesCategory;
   });
@@ -497,7 +580,7 @@ const ServicesClient = ({ services }: { services: Service[] }) => {
           {filteredServices.map((service, index) => (
             <div
               key={`${service.id}-${index}`}
-              className="relative w-[100px] h-[100px] sm:w-[120px] sm:h-[120px] md:w-[145px] md:h-[145px] rounded-xl bg-muted/50 flex flex-col items-center justify-center text-xs cursor-pointer p-0 group transform transition-transform duration-300 hover:scale-105 will-change-transform"
+              className="relative w-[100px] h-[100px] sm:w-[120px] sm:h-[120px] md:w-[140px] md:h-[140px] rounded-xl bg-muted/50 flex flex-col items-center justify-center text-xs cursor-pointer p-0 group transform transition-transform duration-300 hover:scale-105 will-change-transform"
               onClick={() => openForm(service.id)}
               title={`${service.name}: ${service.description}`}
             >
@@ -506,9 +589,7 @@ const ServicesClient = ({ services }: { services: Service[] }) => {
                 alt={service.name}
                 className="w-8 h-8 sm:w-10 sm:h-10 mb-2"
               />
-              <span className="font-semibold text-[10px] sm:text-xs text-center">
-                {service.name}
-              </span>
+              <span className="font-semibold text-[10px] sm:text-xs text-center">{service.name}</span>
             </div>
           ))}
         </div>
